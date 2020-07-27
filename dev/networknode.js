@@ -23,9 +23,30 @@ app.get('/blockchain',function(req,res){
 });
 
 app.post('/transaction',function(req,res){
-    const BlockIndex = bitconin.createNewTransaction(req.body.amount,req.body.sender,req.body.recipient);
-    res.send(`Transcation will be added in block ${BlockIndex}`);
-})
+    const newTransaction = req.body;
+    const blockIndex = bitconin.addTrasactionToPendingTransactions(newTransaction);
+    res.json({note: `Transaction will be added in block ${blockIndex}.`});
+});
+
+
+app.post('/transaction/broadcast',function(req,res){
+    const newTransaction = bitconin.createNewTransaction(req.body.amount,req.body.sender,req.body.recipient);
+    bitconin.addTrasactionToPendingTransactions(newTransaction);
+    const requestPromises = [];
+    bitconin.networkNodes.forEach(networkNodeURL =>{
+        const requestOptions = {
+            uri:networkNodeURL + '/transaction',
+            method: 'POST',
+            body: newTransaction,
+            json: true
+        };
+        requestPromises.push(rp(requestOptions));
+    });
+    Promise.all(requestPromises)
+    .then(data =>{
+        res.json({note:'Transaction create and broadcast successfully'});
+    });
+});
 
 
 app.get('/mine',function(req,res){
@@ -37,12 +58,40 @@ app.get('/mine',function(req,res){
     }
     const nonce = bitconin.proofOfWork(previousBlockHash,currentblockData);
     const blockhash = bitconin.hashBlock(previousBlockHash,currentblockData,nonce);
-    bitconin.createNewTransaction(12.5,"00",nodeAddress);
+
     const newblock = bitconin.createNewBlock(nonce,previousBlockHash,blockhash);
-    res.json({
-        note: "New Block mind Successfully",
-        block: newblock
+    const requestPromises = [];
+    bitconin.networkNodes.forEach(networkNodeURL =>{
+        const requestOptions = {
+            uri:networkNodeURL + '/recieve-new-block',
+            method:'POST',
+            body:{newblock:newblock},
+            json:true
+        };
+        requestOptions.push(rp(requestOptions));
+    });
+    Promise.all(requestPromises)
+    .then(data =>{
+        const requestOptions = {
+            uri:bitconin.currentNodeURL + '/transaction/broadcast',
+            method:'POST',
+            body:{
+                amount:12.5,
+                sender:"00",
+                recipient:nodeAddress
+            },
+            json:true
+        };
+        return rp(requestOptions);
     })
+    .then(data =>{
+        res.json({
+            note: "New Block mind Successfully",
+            block: newblock
+        });
+    });
+
+   
 });
 
 app.post('/register-and-broadcast-node',function(req,res){
@@ -87,10 +136,10 @@ app.post('/register-nodes-bulk',function(req,res){
         const NotCureentNode = bitconin.currentNodeURL !== networkNodeURL;
         if(nodeNotAlreadyPresent && NotCureentNode) bitconin.networkNodes.push(networkNodeURL);
     });
-
     res.json({note:'Bulk registration successful.'});
-
 });
+
+
 
 app.listen(port,function(){
     console.log(`Lising on port ${port}`)
